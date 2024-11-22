@@ -1,42 +1,46 @@
+import os
 import hmac
-import json
 from hashlib import sha256
+from dotenv import load_dotenv
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+
+load_dotenv()
+
+ALGORITHMS = {'sha256': sha256}
+ENCODINGS = ['utf-8']
 
 app = FastAPI()
 
-def create_signature(key, body):
+def create_signature(body, algorithm):
     return hmac.new(
-        key.encode(),
+        os.getenv('SECRET').encode(),
         body.encode(),
-        sha256
+        ALGORITHMS[algorithm]
     ).hexdigest()
 
 
 @app.middleware("http")
 async def validate_signature(request: Request, call_next):
+    if not request.url.path.startswith('/v2/'):
+        return await call_next(request)
 
-    secret = '' # copy from 1pass
-    bad_secret = '12345'
+    encoding, algorithm, signature = request.headers['x-signature'].lower().split('=')
 
-    signature = request.headers['x-signature']
+    if algorithm not in ALGORITHMS.keys():
+        raise HTTPException(status_code=400, detail="Invalid algorithm")
+
+    if encoding not in ENCODINGS:
+        raise HTTPException(status_code=400, detail="Invalid encoding")
 
     body = await request.body()
-    good = create_signature(secret, body.decode("utf-8")) == signature
-    bad = create_signature(bad_secret, body.decode("utf-8")) == signature
 
-    authed_route = request.url.path.startswith('/v2/')
+    expected = create_signature(body.decode(encoding), algorithm)
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=401, detail="Invalid signature")
 
-    if authed_route and not good:
-        return Response(content="Unauthorized", status_code=401)
-
-    response = await call_next(request)
-    # set headers for validating in rails app, not needed in prod
-    response.headers['x-good'] = str(good)
-    response.headers['x-bad'] = str(bad)
-    return response
+    return await call_next(request)
 
 
 @app.post("/v2/async/generative/uncrop")
