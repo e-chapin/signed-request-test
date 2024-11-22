@@ -22,17 +22,12 @@ async def validate_signature(request: Request, call_next):
     bad_secret = '12345'
 
     signature = request.headers['x-signature']
-    rbody = request.headers['x-body']
 
-    body = await request.json()
-    # body is sorted on the rails side, so no need to sort here.
-    json_body = json.dumps(body, separators=(',', ':'), sort_keys=True)
-
-    good = create_signature(secret, json_body) == signature
-    bad = create_signature(bad_secret, json_body) == signature
+    body = await request.body()
+    good = create_signature(secret, body.decode("utf-8")) == signature
+    bad = create_signature(bad_secret, body.decode("utf-8")) == signature
 
     authed_route = request.url.path.startswith('/v2/')
-
 
     if authed_route and not good:
         return Response(content="Unauthorized", status_code=401)
